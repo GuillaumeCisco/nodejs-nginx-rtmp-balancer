@@ -9,8 +9,6 @@ var configuration = JSON.parse(
     fs.readFileSync("config.json")
 );
 
-var publishers = require('./collections/publishers.js');
-var broadcasters = require('./collections/broadcasters.js');
 var helpers = require('./utils/helpers.js');
 var client = require('./utils/redis.js');
 client.on("error", function (err) {
@@ -19,37 +17,9 @@ client.on("error", function (err) {
 
 var http = require('http');
 var app = express();
-
 var router = express.Router();
 
-//Some logic made by me to handle the arrays
-
-Array.prototype.inArray = function (comparer, element) {
-    for (var i = 0; i < this.length; i++) {
-        if (comparer(this[i])) {
-            this.splice(i, 1, element);
-            return true;
-        }
-    }
-    return false;
-};
-
-Array.prototype.pushIfNotExist = function (element, comparer) {
-    if (!this.inArray(comparer, element)) {
-        this.unshift(element);
-    }
-};
-
-Array.prototype.max = function () {
-    return Math.max.apply(null, this);
-};
-
-Array.prototype.min = function () {
-    return Math.min.apply(null, this);
-};
-
 //App sets
-
 var port = normalizePort(process.env.PORT || configuration.port);
 app.set('port', port);
 app.engine('html', require('ejs').renderFile);
@@ -122,7 +92,6 @@ function normalizePort(val) {
 }
 
 //Socket initialization / Network
-
 var server = http.createServer(app);
 var io = require('socket.io')(server);
 server.listen(port);
@@ -165,7 +134,6 @@ router.get('/freepublisher', function (req, res, next) {
             ip: data[0]
         });
     });
-
 });
 
 router.get('/freebroadcaster', function (req, res, next) {
@@ -179,7 +147,6 @@ router.get('/freebroadcaster', function (req, res, next) {
 
 router.post('/remote_redirect', function (req, res, next) {
     // get publisher who publish this stream
-    //get publisher with room req.body['name']
     helpers.getPublisherFromStream(req.body['name']).then(function (data) {
         res.redirect(302, 'rtmp://' + data + '/publish/' + req.body['name']);
     }, function () {

@@ -1,4 +1,3 @@
-/* Copyrights Deluxor 2015  */
 var nconf = require('nconf');
 var express = require('express');
 var path = require('path');
@@ -20,8 +19,8 @@ else {
     nconf.defaults({
         "_comment": "Please update the parameters below with your own ones",
         "edge_address": "0.0.0.0",
-        "edge_address_rtmp_port": 1938,
-        "edge_stats_port": 8083,
+        "edge_address_rtmp_port": 1935,
+        "edge_stats_port": 8080,
         "path": "/stat",
         "timer": 1000,
         "load_balancer_address": "127.0.0.1",
@@ -43,9 +42,7 @@ if (nconf.get('timer') < 500) {
     timer = nconf.get('timer');
 }
 var app = express();
-
 var ioClient = require("socket.io-client")('http://' + nconf.get('load_balancer_address') + ':' + nconf.get('load_balancer_port'));
-
 var packet;
 
 var Clock = {
@@ -109,13 +106,9 @@ callback = function (response) {
                 //send update packet containing the edge object
                 ioClient.emit('sendserver', packet);
             });
-
-
         }
-    )
-    ;
-}
-;
+    );
+};
 
 //Inform client that the update was successful
 
