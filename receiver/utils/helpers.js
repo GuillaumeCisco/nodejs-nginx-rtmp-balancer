@@ -1,46 +1,25 @@
 var _ = require('lodash');
 var publishers = require('../collections/publishers.js');
-
+var client = require('./redis.js');
 
 module.exports = {
     addStream: function(stream, ip) {
-        if (ip in publishers) {
-            publishers[ip].streams = publishers[ip].streams || [];
-
-            var s = _.findWhere(publishers[ip].streams, stream);
-
-            if (typeof s === 'undefined') {
-                publishers[ip].streams.push(stream);
+        client.get(stream, function (err, reply) {
+            if (!reply) {
+                client.set(stream, ip);
             }
-        }
-        else {
-            // ask redis for over node js node
-        }
+        });
     },
     removeStream: function(stream, ip) {
-        if (ip in publishers) {
-            publishers[ip].streams = publishers[ip].streams || [];
 
-            var i = publishers[ip].streams.indexOf(stream);
-
-            if (!!~i) {
-                publishers[ip].streams.splice(i, 1);
+        client.get(stream, function (err, reply) {
+            if (typeof reply !== 'undefined') {
+                client.del(stream);
             }
-        }
-        else {
-            // ask redis for over node js node
-        }
+        });
     },
     getPublisherFromStream: function(stream) {
-        for (var ip in publishers) {
-            var s = _.findWhere(publishers[ip].streams, stream);
-
-            if (typeof s !== 'undefined') {
-                return ip;
-            }
-        }
-
-        // send redis get publisher from stream
+        return client.getAsync(stream); // promise
     }
 };
 

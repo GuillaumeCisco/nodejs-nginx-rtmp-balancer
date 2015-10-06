@@ -12,6 +12,10 @@ var configuration = JSON.parse(
 var publishers = require('./collections/publishers.js');
 var broadcasters = require('./collections/broadcasters.js');
 var helpers = require('./utils/helpers.js');
+var client = require('./utils/redis.js');
+client.on("error", function (err) {
+    console.log("Error " + err);
+});
 
 var http = require('http');
 var app = express();
@@ -48,8 +52,8 @@ Array.prototype.min = function () {
 
 var port = normalizePort(process.env.PORT || configuration.port);
 app.set('port', port);
-//app.engine('html', require('ejs').renderFile);
-//app.set('view engine', 'html');
+app.engine('html', require('ejs').renderFile);
+app.set('view engine', 'jade');
 
 app.use(logger('dev'));
 app.use(bodyParser.json());
@@ -128,12 +132,23 @@ io.on('connection', function (socket) {
         if (packet.security.key === configuration.key) {
             packet.edge.timestamp = Date.now();
 
+            client.hget(packet.edge.ip, function (err, reply) {
+                if (typeof reply === 'undefined') {
+
+                    var data = [];
+                    for (var i = 0, l = packet.edge.length; i < l; i++) {
+                        data.push(i);
+                        data.push(packet.edge[i]);
+                    }
+                    client.hmset(packet.edge.ip, data, function (err, res) {})
+                }
+            });
+
             if (packet.edge.type === 'publisher') {
-                if (!(packet.edge.ip in publishers))
-                    publishers[packet.edge.ip] = packet.edge;
+                client.zadd('publishers', packet.edge.clients, packet.edge.ip);
             }
-            else if (!(packet.edge.ip in broadcasters)) {
-                broadcasters[packet.edge.ip] = packet.edge;
+            else {
+                client.zadd('broadcasters', packet.edge.clients, packet.edge.ip);
             }
 
             socket.emit('serverUpdated', {updated: 'OK'});
@@ -143,80 +158,35 @@ io.on('connection', function (socket) {
     });
 });
 
-//Define routes here
-//router.get('/servers', function (req, res, next) {
-//    var type = req.query.type;
-//
-//    if (type === 'publishers')
-//        var obj = publisher;
-//    else if (type === 'broadcasters')
-//        var obj = broadcaster;
-//    else
-//        var obj = publisher.concat(broadcaster);
-//
-//    for (var i = 0; i < obj.length; i++) {
-//        if ((Date.now() - obj[i].timestamp) <= configuration.timeout) { //if a server is more than 5 seconds without updating gets flagged as OFFLINE!
-//            obj[i].status = 'ONLINE';
-//        } else {
-//            obj[i].status = 'OFFLINE';
-//        }
-//
-//        obj[i].last_update = new Date(obj[i].timestamp);
-//    }
-//
-//    res.status(200).json(obj);
-//});
-
-function get_freeserver_ip(type) {
-
-    var freeServers = type === 'publisher' ? publishers : broadcasters,
-        freeServer,
-        minimum;
-
-    for (var ip in freeServers) {
-        if (typeof minimum === 'undefined') {
-            minimum = parseInt(freeServers[ip].clients, 10);
-        }
-
-        var clients = parseInt(freeServers[ip].clients, 10);
-
-        if (clients <= minimum) {
-            minimum = clients;
-            freeServer = freeServers[ip];
-        }
-    }
-
-    return freeServer.ip;
-}
-
 router.get('/freepublisher', function (req, res, next) {
 
-    res.status(200).json({
-        ip: get_freeserver_ip('publisher')
+    client.zrevrangeAsync('publishers', '-1', '-1').then(function (data) {
+        res.status(200).json({
+            ip: data[0]
+        });
     });
+
 });
 
 router.get('/freebroadcaster', function (req, res, next) {
 
-    res.status(200).json({
-        ip: get_freeserver_ip('broadcaster')
+    client.zrevrangeAsync('broadcasters', '-1', '-1').then(function (data) {
+        res.status(200).json({
+            ip: data[0]
+        });
     });
 });
 
 router.post('/remote_redirect', function (req, res, next) {
     // get publisher who publish this stream
     //get publisher with room req.body['name']
-    var ip = helpers.getPublisherFromStream(req.body['name']);
-
-    if (typeof ip !== 'undefined') {
-        res.redirect(302, 'rtmp://' + ip + '/publish/' + req.body['name']);
-    }
-    else {
+    helpers.getPublisherFromStream(req.body['name']).then(function (data) {
+        res.redirect(302, 'rtmp://' + data + '/publish/' + req.body['name']);
+    }, function () {
         res.status(404).json({
             message: 'No publisher found for this stream.'
         });
-    }
-
+    });
 });
 
 router.post('/on_publish', function (req, res, next) {
@@ -242,7 +212,6 @@ router.post('/on_publish_done', function (req, res, next) {
 
     // remove room from publisher_ip
     helpers.removeStream(room, publisher_ip);
-
 
     res.status(200).json({
         message: 'on_publish_done',
