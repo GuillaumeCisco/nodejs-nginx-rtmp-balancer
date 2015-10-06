@@ -4,11 +4,14 @@ var path = require('path');
 var logger = require('morgan');
 var cookieParser = require('cookie-parser');
 var bodyParser = require('body-parser');
-var edge = require('./edge.js');
 var fs = require("fs");
 var configuration = JSON.parse(
     fs.readFileSync("config.json")
 );
+
+var publishers = require('./collections/publishers.js');
+var broadcasters = require('./collections/broadcasters.js');
+var helpers = require('./utils/helpers.js');
 
 var http = require('http');
 var app = express();
@@ -124,10 +127,15 @@ io.on('connection', function (socket) {
     socket.on('sendserver', function (packet) {
         if (packet.security.key === configuration.key) {
             packet.edge.timestamp = Date.now();
-            //console.log(packet.edge);
-            edge.pushIfNotExist(packet.edge, function (e) {
-                return e.ip === packet.edge.ip; //check if the server already exists in the array!
-            });
+
+            if (packet.edge.type === 'publisher') {
+                if (!(packet.edge.ip in publishers))
+                    publishers[packet.edge.ip] = packet.edge;
+            }
+            else if (!(packet.edge.ip in broadcasters)) {
+                broadcasters[packet.edge.ip] = packet.edge;
+            }
+
             socket.emit('serverUpdated', {updated: 'OK'});
         } else {
             socket.emit('serverUpdated', {updated: 'FAIL -> Security Key Invalid'});
@@ -136,65 +144,72 @@ io.on('connection', function (socket) {
 });
 
 //Define routes here
+//router.get('/servers', function (req, res, next) {
+//    var type = req.query.type;
+//
+//    if (type === 'publishers')
+//        var obj = publisher;
+//    else if (type === 'broadcasters')
+//        var obj = broadcaster;
+//    else
+//        var obj = publisher.concat(broadcaster);
+//
+//    for (var i = 0; i < obj.length; i++) {
+//        if ((Date.now() - obj[i].timestamp) <= configuration.timeout) { //if a server is more than 5 seconds without updating gets flagged as OFFLINE!
+//            obj[i].status = 'ONLINE';
+//        } else {
+//            obj[i].status = 'OFFLINE';
+//        }
+//
+//        obj[i].last_update = new Date(obj[i].timestamp);
+//    }
+//
+//    res.status(200).json(obj);
+//});
 
-router.get('/servers', function (req, res, next) {
+function get_freeserver_ip(type) {
 
-    var obj = edge;
+    var freeServers = type === 'publisher' ? publishers : broadcasters,
+        freeServer,
+        minimum;
 
-    for (var i = 0; i < obj.length; i++) {
-        if ((Date.now() - obj[i].timestamp) <= configuration.timeout) { //if a server is more than 5 seconds without updating gets flagged as OFFLINE!
-            obj[i].status = 'ONLINE';
-        } else {
-            obj[i].status = 'OFFLINE';
+    for (var ip in freeServers) {
+        if (typeof minimum === 'undefined') {
+            minimum = parseInt(freeServers[ip].clients, 10);
         }
 
-        obj[i].last_update = new Date(obj[i].timestamp);
-    }
-
-    res.status(200).json(obj);
-});
-
-
-function get_freeserver(type) {
-    var freeServer,
-        freeServers = _.filter(edge, {type: type}),
-        minimum = parseInt(freeServers[0].clients, 10);
-
-    for (var i = 0, l = freeServers.length; i < l; i++) {
-        var clients = parseInt(freeServers[i].clients, 10);
+        var clients = parseInt(freeServers[ip].clients, 10);
 
         if (clients <= minimum) {
             minimum = clients;
-            freeServer = freeServers[i];
+            freeServer = freeServers[ip];
         }
     }
 
-    return freeServer;
+    return freeServer.ip;
 }
 
 router.get('/freepublisher', function (req, res, next) {
 
     res.status(200).json({
-        ip: get_freeserver('publisher')
+        ip: get_freeserver_ip('publisher')
     });
 });
 
 router.get('/freebroadcaster', function (req, res, next) {
 
     res.status(200).json({
-        ip: get_freeserver('broadcaster').ip
+        ip: get_freeserver_ip('broadcaster')
     });
 });
 
 router.post('/remote_redirect', function (req, res, next) {
     // get publisher who publish this stream
-    //FIXME
     //get publisher with room req.body['name']
+    var ip = helpers.getPublisherFromStream(req.body['name']);
 
-    var publisher;
-
-    if (typeof publisher !== 'undefined') {
-        res.redirect(302, 'rtmp://' + publisher.ip + '/publish/' + req.body['name']);
+    if (typeof ip !== 'undefined') {
+        res.redirect(302, 'rtmp://' + ip + '/publish/' + req.body['name']);
     }
     else {
         res.status(404).json({
@@ -206,13 +221,11 @@ router.post('/remote_redirect', function (req, res, next) {
 
 router.post('/on_publish', function (req, res, next) {
 
-    console.log(req.body);
-
     var room = req.body['name'],
-        publisher_ip = /rtmp:\/\/(.*):/g.exec(req.body['tcurl'])[1];
+        publisher_ip = req.body['tcurl'].match(/rtmp:\/\/([^\/]*)/)[1];
 
-    //FIXME
     // add room to publisher if not present in it
+    helpers.addStream(room, publisher_ip);
 
     // get publisher who publish this stream
     res.status(200).json({
@@ -224,13 +237,12 @@ router.post('/on_publish', function (req, res, next) {
 
 router.post('/on_publish_done', function (req, res, next) {
     // get publisher who publish this stream
-    console.log(req.body);
-
     var room = req.body['name'],
-        publisher_ip = /rtmp:\/\/(.*):/g.exec(req.body['tcurl'])[1];
+        publisher_ip = req.body['tcurl'].match(/rtmp:\/\/([^\/]*)/)[1];
 
-    // FIXME
     // remove room from publisher_ip
+    helpers.removeStream(room, publisher_ip);
+
 
     res.status(200).json({
         message: 'on_publish_done',
@@ -238,6 +250,5 @@ router.post('/on_publish_done', function (req, res, next) {
     });
 
 });
-
 
 module.exports = app;
